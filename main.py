@@ -1,9 +1,9 @@
 from http.server import HTTPServer, BaseHTTPRequestHandler, HTTPStatus
-from socketserver import ThreadingMixIn
+from socketserver import BaseRequestHandler, ThreadingMixIn
 import json, ssl
 import threading, time
 import signal
-import os, random
+import os
 import mimetypes
 import re
 import pathlib
@@ -14,6 +14,8 @@ import trained.model as model
 from utils.utils import logger
 from utils.utils import safe_execute
 from database.db_connector import DBConnector
+
+os.chdir(str(pathlib.Path(__file__).parent))
 
 # logger.set_level(logger.DEBUG)
 # logger.set_file("abc.log")
@@ -66,6 +68,8 @@ class UtilsDB:
                 data TEXT DEFAULT '{}'
             ) WITHOUT ROWID;
             """,
+            """ INSERT OR IGNORE INTO config(key, data) VALUES ('base', '{"mode":0,"setting":0}')
+            """
         ]
         ok = True
         for query in queries:
@@ -81,31 +85,24 @@ class UtilsDB:
         return safe_execute(None, self.__write, query, int(time.time() * 1000), data)
 
     def save_conf(self, data):
-        query = "INSERT INTO config(key, data) VALUES (?, ?)"
-        return safe_execute(None, self.__write, query, 'base', data)
+        query = "UPDATE config SET data = ? WHERE key = ?"
+        return safe_execute(None, self.__write, query, data, 'base')
 
     def query_conf(self):
         query = "SELECT data FROM config where key = ?"
         cursor = self.__rconn.cursor()
-        cursor.execute(query, 'base')
+        cursor.execute(query, ['base'])
         _rows = cursor.fetchall()
 
         if len(_rows) == 0:
             return '{}'
-        return json.dumps(_rows[0])
+        return _rows[0][0]
 
-    def query_proc(self, start, end):
-        query = "SELECT time, humidity, temp, soil_moisture, status, action FROM data_process "
-        cond  = ""
+    def query_proc(self, size):
+        query = "SELECT min(time), AVG(humidity), AVG(temp), AVG(soil_moisture), MAX(status), MAX(action) FROM data_process "
         args  = []
-        if start is not None:
-            cond += "start >= ?"
-            args.append(start)
-        if end is not None:
-            cond += "end <= ?"
-            args.append(end)
-        if cond != '':
-            query += f"WHERE {cond}"
+
+        query += "GROUP BY FLOOR(time / 5000) ORDER BY time DESC LIMIT %s" % (size if size is not None else 10)
 
         cursor = self.__rconn.cursor()
         cursor.execute(query, args)
@@ -134,6 +131,7 @@ class Utils:
     model    = model.load()
     database = UtilsDB()
 
+    @staticmethod
     def handle_data(in_data):
         # example: humidity=97.6&temp=50&status=0
         if re.match("^((\\w+)=([0-9.]+)&{0,1})*$", in_data) is None:
@@ -162,7 +160,13 @@ class Utils:
             Utils.database.record_err(f"Invalid data recevied '{in_data}'. Error: {e}")
             return "-1"
 
-        logger.info("Recevied data to action", data = parsed_data)
+        config = json.loads(Utils.database.query_conf())
+        logger.info("Recevied data to action", config, data = parsed_data)
+        if config["mode"] == 1: # Manual config
+            resp = '%s' % config["setting"]
+            Utils.database.record_proc(parsed_data["humidity"], parsed_data["temp"], parsed_data["soil_moisture"], parsed_data["status"], resp)
+            return resp
+
         try:
             resp = "%s" % (model.predict(Utils.model, [parsed_data["humidity"], parsed_data["soil_moisture"], parsed_data["temp"]]))
             Utils.database.record_proc(parsed_data["humidity"], parsed_data["temp"], parsed_data["soil_moisture"], parsed_data["status"], resp)
@@ -173,7 +177,7 @@ class Utils:
             return "-1"
 
 class ServerHandler(BaseHTTPRequestHandler):
-    __web_dir  = os.path.join(os.getcwd(), 'web/dist')
+    __web_dir  = os.path.join(os.getcwd(), 'web\\dist')
 
     @property
     def __class_name(self): return self.__class__.__name__
@@ -186,11 +190,6 @@ class ServerHandler(BaseHTTPRequestHandler):
 
     def log_request(self, code='-', size='-'):
         if isinstance(code, HTTPStatus): code = code.value
-        # content_len = self.headers['Content-Length']
-        # self.data_str = self.rfile.read(int(content_len if content_len is not None else 0))
-        # if self.__data_string.__len__() != 0:
-        #     logger.info(self.__class_name, self.address_string(), self.requestline, str(code), body = self.__data_string)
-        # else:
         logger.info(self.__class_name, self.address_string(), self.requestline, str(code))
 
     def send_ok(self):
@@ -240,21 +239,18 @@ class ServerHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(msg.encode())
         elif method == "GET" and urlparse(self.path).path == "/api/data":
-            params = parse_qs(urlparse(self.path).params)
-            start = None
-            end   = None
+            params = parse_qs(urlparse(self.path).query)
+            size = None
             try:
-                if 'start' in params:
-                    start = int(params['start'][0])
-                if 'end' in params:
-                    end = int(params['end'][0])
+                if 'size' in params:
+                    size = int(params['size'][0])
             except Exception as e:
                 msg = f"Invalid data to query '{self.path}'"
                 logger.error(msg)
                 self.send_error(400, msg)
                 return
 
-            msg = Utils.database.query_proc(start, end)
+            msg = Utils.database.query_proc(size)
             if msg is None:
                 msg = f"Failed to query data '{self.path}'"
                 logger.error(msg)
@@ -264,7 +260,7 @@ class ServerHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(msg.encode())
         elif method == "GET" and urlparse(self.path).path == "/api/log":
-            params = parse_qs(urlparse(self.path).params)
+            params = parse_qs(urlparse(self.path).query)
             start = None
             end   = None
             try:
@@ -311,17 +307,14 @@ class ServerHandler(BaseHTTPRequestHandler):
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     """Handle requests in a separate thread."""
 
-def run(server):
-    logger.info('Server running on port %s' % PORT, use_tls = USE_TLS, cert_file = CERTIFICATE_PATH)
-    server.serve_forever()
-
 """ Handle signal """
 running = True
 server  = None
 def signal_handler(sig, _):
     global server, running
     if server is not None:
-        server.shutdown()
+        threading.Thread(target=ThreadedHTTPServer.shutdown, args=[server])
+        threading.Thread(target=ThreadingMixIn.server_close, args=[server])
         logger.info("Recvice '%s', Shutdown server on port %s" % (str(signal.Signals(sig).name), PORT))
 
     if running == False:
@@ -335,13 +328,12 @@ signal.signal(signal.SIGINT, signal_handler)
 if __name__ == "__main__":
     server = ThreadedHTTPServer(('', PORT), ServerHandler)
     if USE_TLS:
-        server.socket = ssl.wrap_socket(
-            server.socket, server_side = True,
-            certfile    = CERTIFICATE_PATH,
-            ssl_version = ssl.PROTOCOL_TLSv1_2)
+        server.socket = ssl.wrap_socket(server.socket, server_side = True, certfile = CERTIFICATE_PATH, ssl_version = ssl.PROTOCOL_TLS)
 
-    running_thread = threading.Thread(target=run, args=[server])
+    logger.info('Server running on port %s' % PORT, use_tls = USE_TLS, cert_file = CERTIFICATE_PATH)
+    running_thread = threading.Thread(target=ThreadedHTTPServer.serve_forever, args=[server])
     running_thread.start()
 
-    while running or running_thread.is_alive(): time.sleep(1)
-    running_thread.join()
+    while running and running_thread.is_alive(): time.sleep(1)
+
+    running_thread.join(1)

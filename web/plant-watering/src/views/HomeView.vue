@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import TheWelcome from '../components/TheWelcome.vue'
+import MonitorChart from '@/components/MonitorChart.vue';
 </script>
 
 <template>
   <main>
-    <TheWelcome />
+    <MonitorChart />
   </main>
 </template>
