@@ -134,7 +134,7 @@ class Utils:
     @staticmethod
     def handle_data(in_data):
         # example: humidity=97.6&temp=50&status=0
-        if re.match("^((\\w+)=([0-9.]+)&{0,1})*$", in_data) is None:
+        if re.match("^((\\w+)=([0-9.-]+)&{0,1})*$", in_data) is None:
             logger.error("Invalid data recevied", input = in_data)
             Utils.database.record_err("Invalid data recevied '%s'" % in_data)
             return "-1"
@@ -166,10 +166,6 @@ class Utils:
             resp = '%s' % config["setting"]
             Utils.database.record_proc(parsed_data["humidity"], parsed_data["temp"], parsed_data["soil_moisture"], parsed_data["status"], resp)
             return resp
-
-        # # 27°C, 57%
-        # if parsed_data["humidity"] > 57:
-        #     return "0"
 
         try:
             resp = "%s" % (model.predict(Utils.model, [parsed_data["humidity"], parsed_data["soil_moisture"], parsed_data["temp"]]))
