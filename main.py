@@ -102,7 +102,7 @@ class UtilsDB:
         query = "SELECT min(time), AVG(humidity), AVG(temp), AVG(soil_moisture), MAX(status), MAX(action) FROM data_process "
         args  = []
 
-        query += "GROUP BY FLOOR(time / 5000) ORDER BY time DESC LIMIT %s" % (size if size is not None else 10)
+        query += "GROUP BY FLOOR(time) ORDER BY time DESC LIMIT %s" % (size if size is not None else 10)
 
         cursor = self.__rconn.cursor()
         cursor.execute(query, args)
@@ -166,6 +166,10 @@ class Utils:
             resp = '%s' % config["setting"]
             Utils.database.record_proc(parsed_data["humidity"], parsed_data["temp"], parsed_data["soil_moisture"], parsed_data["status"], resp)
             return resp
+
+        # # 27°C, 57%
+        # if parsed_data["humidity"] > 57:
+        #     return "0"
 
         try:
             resp = "%s" % (model.predict(Utils.model, [parsed_data["humidity"], parsed_data["soil_moisture"], parsed_data["temp"]]))

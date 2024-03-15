@@ -14,7 +14,7 @@ app.use(router)
 
 app.use(Vue3Toastify, {
     autoClose: 1500,
-    position: "top-left",
+    position: "bottom-left",
     pauseOnHover: false,
     hideProgressBar: true
 } as ToastContainerOptions);

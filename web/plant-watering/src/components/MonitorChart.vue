@@ -102,8 +102,8 @@ export default {
             isVisible: _isVisible as any,
             chartSizes: {
                 class: "disabled",
-                label: "Choose chart size [15]",
-                choose: 15,
+                label: "Choose chart size [30]",
+                choose: 30,
                 options: [ 10, 15, 20, 30, 40, 50]
             },
             menuMode: {
@@ -201,6 +201,14 @@ export default {
                 srvConf['mode'] = mode;
                 this.saveConfig();
             }
+            this.checkConfig();
+        },
+        checkConfig() {
+            if (srvConf['mode'] == 0) {
+                this.menuSetting.class = "disabled";
+            } else {
+                this.menuSetting.class = "";
+            }
         },
         updateSetting(idx: any) {
             this.menuSetting.text = this.menuSetting.options[idx];
@@ -208,6 +216,7 @@ export default {
                 srvConf['setting'] = idx;
                 this.saveConfig();
             }
+            this.checkConfig();
         },
         updateChartSize(size: any) {
             this.chartSizes.choose = size;
@@ -221,6 +230,7 @@ export default {
                     srvConf = data;
                     this.menuMode.text = this.menuMode.options[srvConf['mode']];
                     this.menuSetting.text = this.menuSetting.options[srvConf['setting']];
+                    this.checkConfig();
                 });
             }).catch((err) => {
                 console.error(err);
@@ -261,6 +271,14 @@ export default {
                 }
             },
         };
+
+        // const self = this;
+        console.log("refreshData");
+        setInterval(function (self: any) {
+            self.refreshData();
+            console.log("refreshData");
+            // self.refreshData();
+        }, 2000, this);
     },
 }
 </script>
